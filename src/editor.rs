@@ -1,7 +1,10 @@
 use crossterm::event::{Event, Event::Key, KeyCode::Char, KeyEvent, KeyModifiers, read};
-use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
-use std::io::stdout;
+use std::io::Error;
+mod terminal;
+use terminal::{Position, Size, Terminal};
+
+const NAME: &str = env!("CARGO_PKG_NAME");
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Editor {
     should_quit: bool,
@@ -9,39 +12,26 @@ pub struct Editor {
 
 impl Editor {
     pub fn default() -> Self {
-        Editor { should_quit: false }
+        Self { should_quit: false }
     }
+
     pub fn run(&mut self) {
-        Self::initialize().unwrap();
+        Terminal::initialize().unwrap();
         let result = self.repl();
-        Self::terminate().unwrap();
+        Terminal::terminate().unwrap();
         result.unwrap();
     }
 
-    fn initialize() -> Result<(), std::io::Error> {
-        enable_raw_mode()?;
-        Self::clear_screen()
-    }
-    fn terminate() -> Result<(), std::io::Error> {
-        disable_raw_mode()
-    }
-    fn clear_screen() -> Result<(), std::io::Error> {
-        let mut stdout = stdout();
-        execute!(stdout, Clear(ClearType::All))
-    }
-
-    fn repl(&mut self) -> Result<(), std::io::Error> {
+    fn repl(&mut self) -> Result<(), Error> {
         loop {
-            let event = read()?;
-            self.evaluate_event(&event);
             self.refresh_screen()?;
 
             if self.should_quit {
                 break;
             }
+            let event = read()?;
+            self.evaluate_event(&event);
         }
-
-        disable_raw_mode()?;
         Ok(())
     }
 
@@ -59,10 +49,55 @@ impl Editor {
         }
     }
 
-    fn refresh_screen(&self) -> Result<(), std::io::Error> {
+    fn refresh_screen(&self) -> Result<(), Error> {
+        Terminal::hide_cursor()?;
         if self.should_quit {
-            Self::clear_screen()?;
-            print!("bye. \r\n");
+            Terminal::clear_screen()?;
+            Terminal::print("Good Bye.\r\n")?;
+        } else {
+            Self::draw_rows()?;
+            Terminal::move_cursor_to(Position { x: 0, y: 0 })?;
+        }
+        Terminal::show_cursor()?;
+        Terminal::execute()?;
+        Ok(())
+    }
+
+    pub fn draw_welcome_screen() -> Result<(), Error> {
+        let mut welcome_message = format!("{NAME} editor -- version {VERSION}");
+        let width = Terminal::size()?.width;
+        let len = welcome_message.len();
+        // we allow this since we dont care if message is put exaclty in the middle
+        // its allowed to be one bit to the left or right.
+        #[allow(clippy::integer_division)]
+        let padding = (width.saturating_sub(len)) / 2;
+        let spaces = " ".repeat(padding.saturating_sub(1));
+        welcome_message = format!("~{spaces} {welcome_message}");
+        welcome_message.truncate(width);
+        Terminal::print(&welcome_message)?;
+        Ok(())
+    }
+
+    fn draw_empty_row() -> Result<(), Error> {
+        Terminal::print("~")?;
+        Ok(())
+    }
+
+    fn draw_rows() -> Result<(), Error> {
+        let Size { height, .. } = Terminal::size()?;
+        for row in 0..height {
+            Terminal::clear_line()?;
+
+            #[allow(clippy::integer_division)]
+            if row == height / 3 {
+                Self::draw_welcome_screen()?;
+            } else {
+                Self::draw_empty_row()?;
+            }
+
+            if row.saturating_add(1) < height {
+                Terminal::print("\r\n")?;
+            }
         }
         Ok(())
     }
